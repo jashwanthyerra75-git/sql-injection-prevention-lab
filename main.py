@@ -1,56 +1,99 @@
-
 import sqlite3
+import hashlib
+import secrets
+import hmac
+import getpass
+
+DB_NAME = "users.db"
+ITERATIONS = 600_000
+
+
+def hash_password(password, salt=None):
+    if salt is None:
+        salt = secrets.token_bytes(16)
+
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        ITERATIONS
+    )
+    return salt.hex(), password_hash.hex()
+
 
 def setup_database():
-    db = sqlite3.connect("users.db")
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL
-        )
-    """)
-    db.execute(
-        "INSERT OR IGNORE INTO users (username) VALUES (?)",
-        ("ravi",)
+    with sqlite3.connect(DB_NAME) as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL
+            )
+        """)
+
+        users = [
+            ("ravi", "RaviDemo!42"),
+            ("priya", "PriyaDemo!57")
+        ]
+
+        for username, password in users:
+            salt, password_hash = hash_password(password)
+            db.execute("""
+                INSERT OR IGNORE INTO accounts
+                (username, salt, password_hash)
+                VALUES (?, ?, ?)
+            """, (username, salt, password_hash))
+
+
+def login():
+    username = input("Username: ").strip()
+    password = getpass.getpass("Password: ")
+
+    with sqlite3.connect(DB_NAME) as db:
+        row = db.execute("""
+            SELECT salt, password_hash
+            FROM accounts
+            WHERE username = ?
+        """, (username,)).fetchone()
+
+    if row is None:
+        print("Login failed.")
+        return
+
+    salt = bytes.fromhex(row[0])
+    expected_hash = bytes.fromhex(row[1])
+
+    actual_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        ITERATIONS
     )
-    db.execute(
-        "INSERT OR IGNORE INTO users (username) VALUES (?)",
-        ("priya",)
-    )
-    db.commit()
-    return db
+
+    if hmac.compare_digest(actual_hash, expected_hash):
+        print("Login successful!")
+    else:
+        print("Login failed.")
+
 
 def main():
-    db = setup_database()
+    setup_database()
 
-    print("\n=== User Database Security Lab ===")
-    print("1. Search for a user")
-    print("2. List all usernames")
-    print("3. Exit")
+    print("\n=== Secure Login Lab ===")
+    print("1. Login")
+    print("2. Exit")
 
     choice = input("Choose an option: ")
 
     if choice == "1":
-        username = input("Enter username: ")
-        result = db.execute(
-            "SELECT id, username FROM users WHERE username = ?",
-            (username,)
-        ).fetchall()
-        print("Results:", result)
-
+        login()
     elif choice == "2":
-        result = db.execute(
-            "SELECT id, username FROM users"
-        ).fetchall()
-        print("Users:", result)
-
-    elif choice == "3":
         print("Goodbye!")
-
     else:
         print("Invalid option.")
 
-    db.close()
 
 if __name__ == "__main__":
     main()
+    
